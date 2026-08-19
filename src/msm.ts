@@ -253,38 +253,61 @@ type RegisterInput = {
   category: 'mech' | 'semi-mech';
   flags: Array<{ name: string; type: string; description?: string; required?: boolean; default?: unknown }>;
   usage: string | undefined;
+  /**
+   * 注册归属的 skill（可选）。
+   * - 缺省 → 沿用 state.cccName（向后兼容）
+   * - 显式传入 → 校验 path 必须包含该 skill（.opencode/skills/<skill>/），
+   *   不包含则抛错，防止 skill 字段与脚本实际位置错配（多真相源）。
+   */
+  skill?: string;
 };
 
 /** 内部 register 实现（v1.17 从 msmRegisterTool 抽出） */
 async function registerMsmInner(input: RegisterInput): Promise<string> {
-  log.info('msm', 'ccc_admin register called', { name: input.name, path: input.path });
+  log.info('msm', 'ccc_admin register called', { name: input.name, path: input.path, skill: input.skill });
   const state = getState();
 
-  // 1. 读 registry（含 schema 信息）
-  const file = loadRegistryFile(state.cwdRoot, state.cccName);
+  // 1. 解析归属 skill：显式传入优先，缺省 cccName（向后兼容）
+  const skill = input.skill ?? state.cccName;
 
-  // 2. 查重
+  // 2. 读 registry（含 schema 信息）— 写目标 skill 的注册表
+  const file = loadRegistryFile(state.cwdRoot, skill);
+
+  // 3. 查重
   if (file.entries.some((e) => e.name === input.name)) {
     throw new MsmAlreadyRegisteredError(input.name);
   }
 
-  // 3. 路径必须在 cwdRoot 内
+  // 4. 路径必须在 cwdRoot 内
   const absPath = input.path.startsWith('/') ? input.path : resolve(state.cwdRoot, input.path);
   if (!isPathInside(state.cwdRoot, absPath)) {
     throw new MsmPathEscapeError(input.name, 'path', input.path, absPath);
   }
 
-  // 4. 脚本文件必须存在
+  // 5. 脚本文件必须存在
   if (!existsSync(absPath)) {
     throw new MsmScriptNotFoundError(input.name, absPath);
   }
 
-  // 5. 构造 entry
+  // 6. skill-path 一致性校验：显式 skill 时 path 必须包含该 skill 目录
+  //    （防 skill 字段与脚本实际位置错配 — 多真相源；DSH acc_msm 无此校验，本实现强化）
+  if (input.skill !== undefined) {
+    const expectedSegment = `.opencode/skills/${skill}/`;
+    const pathNorm = absPath.replaceAll('\\', '/');
+    if (!pathNorm.includes(expectedSegment)) {
+      throw new Error(
+        `ccc_admin: skill-path mismatch — path "${input.path}" does not contain "${expectedSegment}". ` +
+        `Provide a script inside .opencode/skills/${skill}/scripts/ or omit the skill argument.`
+      );
+    }
+  }
+
+  // 7. 构造 entry
   const usage = input.usage ?? `npx tsx ${input.path}`;
   const newEntry: MechEntry = {
     name: input.name,
     path: input.path,
-    skill: state.cccName,
+    skill,
     category: input.category,
     description: input.description,
     usage,
@@ -297,20 +320,20 @@ async function registerMsmInner(input: RegisterInput): Promise<string> {
     })),
   };
 
-  // 6. 写回（保留 schema）
+  // 8. 写回（保留 schema）
   file.entries.push(newEntry);
-  writeRegistryFile(state.cwdRoot, state.cccName, file);
-  log.info('msm', 'ccc_admin register wrote registry', { name: input.name, absPath });
+  writeRegistryFile(state.cwdRoot, skill, file);
+  log.info('msm', 'ccc_admin register wrote registry', { name: input.name, skill, absPath });
 
-  // 7. 自动 commit
-  const relRegistry = `.opencode/skills/${state.cccName}/references/mech-registry.json`;
+  // 9. 自动 commit（写目标 skill 的注册表文件）
+  const relRegistry = `.opencode/skills/${skill}/references/mech-registry.json`;
   try {
     gitAddAndCommit(state.cwdRoot, relRegistry, `chore(msm): register ${input.name}`);
   } catch (err) {
     log.warn('msm', 'git commit failed (continuing)', { err: String(err) });
   }
 
-  return `registered "${input.name}" at ${absPath} (commit created)`;
+  return `registered "${input.name}" under skill "${skill}" at ${absPath} (commit created)`;
 }
 
 type DeregisterInput = { name: string };
@@ -446,7 +469,9 @@ export const msmAdminTool: ToolDefinition = tool({
     'CCC MSM (Mech & Semi-Mech) registry management tool. ' +
     'Maintains mech-registry.json of the current CCC: register/deregister MSMs, ' +
     'show dev guide, run quality checks, view CCC configuration. ' +
-    'action=register: add a new MSM (requires name/path/description/category), auto git commit. ' +
+    'action=register: add a new MSM (requires name/path/description/category; optional skill — ' +
+    'when given, path must live under .opencode/skills/<skill>/ and the entry is written to that skill\'s registry; ' +
+    'when omitted, defaults to the CCC name), auto git commit. ' +
     'action=deregister: remove an MSM, auto git commit. ' +
     'action=guide: MSM development handbook (script conventions, testing, registration). ' +
     'action=check: run DC-M1~M4 quality checks on all MSM scripts. ' +
@@ -461,6 +486,10 @@ export const msmAdminTool: ToolDefinition = tool({
       .string()
       .optional()
       .describe('unique MSM name (kebab-case recommended); for register and deregister'),
+    skill: z
+      .string()
+      .optional()
+      .describe('[register] owning skill (optional). When provided, path must contain ".opencode/skills/<skill>/" — mismatch throws. Defaults to the CCC name when omitted.'),
     path: z
       .string()
       .optional()
@@ -747,6 +776,7 @@ export const msmAdminTool: ToolDefinition = tool({
         category: input.category,
         flags: input.flags ?? [],
         usage: input.usage,
+        skill: input.skill,
       });
     }
     if (!input.name) {

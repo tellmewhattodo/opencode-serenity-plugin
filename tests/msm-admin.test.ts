@@ -67,6 +67,7 @@ function fakeCtx(cwd: string): ToolContext {
 
 function writeRegistry(cwd: string, name: string, content: unknown): void {
   const path = join(cwd, '.opencode', 'skills', name, 'references', 'mech-registry.json');
+  mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, JSON.stringify(content, null, 2));
 }
 
@@ -233,6 +234,92 @@ describe('ccc_admin action=register (v1.17 — 合并自 v1.1 msm_register)', ()
           fakeCtx(cwd),
         ),
       ).rejects.toThrow(/requires name, path, description, category/);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('显式 skill 且路径匹配 → 写入该 skill 注册表，skill 字段正确', async () => {
+    const { cwd } = setupRepo();
+    try {
+      // 建非 cccName 的 skill 目录 + 脚本
+      makeScript(cwd, '.opencode/skills/home-media/scripts/subtool.ts');
+      writeRegistry(cwd, 'home-media', []);
+      setState({ activated: true, cwdRoot: cwd, cccName: 'home-serenity' });
+
+      const result = await msmAdminTool.execute(
+        {
+          action: 'register',
+          name: 'subtool',
+          path: '.opencode/skills/home-media/scripts/subtool.ts',
+          description: 'd',
+          flags: [],
+          category: 'mech',
+          skill: 'home-media',
+        } as any,
+        fakeCtx(cwd),
+      );
+      expect(result).toContain('registered');
+      // 写入 home-media 注册表（而非 home-serenity）
+      const reg = readRegistry(cwd, 'home-media') as Array<{ name: string; skill: string }>;
+      expect(reg).toHaveLength(1);
+      expect(reg[0]?.name).toBe('subtool');
+      expect(reg[0]?.skill).toBe('home-media');
+      // home-serenity 注册表文件未创建（跨 skill 写入隔离）
+      expect(existsSync(join(cwd, '.opencode', 'skills', 'home-serenity', 'references', 'mech-registry.json'))).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('显式 skill 但路径不包含该 skill → 抛 skill-path mismatch', async () => {
+    const { cwd } = setupRepo();
+    try {
+      makeScript(cwd, '.opencode/skills/other-skill/scripts/tool.ts');
+      writeRegistry(cwd, 'home-media', []);
+      setState({ activated: true, cwdRoot: cwd, cccName: 'home-serenity' });
+
+      await expect(
+        msmAdminTool.execute(
+          {
+            action: 'register',
+            name: 'tool',
+            path: '.opencode/skills/other-skill/scripts/tool.ts',
+            description: 'd',
+            flags: [],
+            category: 'mech',
+            skill: 'home-media',
+          } as any,
+          fakeCtx(cwd),
+        ),
+      ).rejects.toThrow(/skill-path mismatch/);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('缺省 skill → 沿用 cccName（向后兼容）', async () => {
+    const { cwd } = setupRepo();
+    try {
+      makeScript(cwd, '.opencode/skills/home-serenity/scripts/legacy.ts');
+      writeRegistry(cwd, 'home-serenity', []);
+      setState({ activated: true, cwdRoot: cwd, cccName: 'home-serenity' });
+
+      const result = await msmAdminTool.execute(
+        {
+          action: 'register',
+          name: 'legacy',
+          path: '.opencode/skills/home-serenity/scripts/legacy.ts',
+          description: 'd',
+          flags: [],
+          category: 'mech',
+        } as any,
+        fakeCtx(cwd),
+      );
+      expect(result).toContain('registered');
+      const reg = readRegistry(cwd, 'home-serenity') as Array<{ name: string; skill: string }>;
+      expect(reg).toHaveLength(1);
+      expect(reg[0]?.skill).toBe('home-serenity');
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
