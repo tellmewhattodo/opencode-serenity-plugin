@@ -1,6 +1,6 @@
 {
   "name": "@shgroup/opencode-serenity-plugin",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "private": false,
   "description": "Serenity — 为 OpenCode Agent 提供认知容器 (CCC) 基础设施。10 个工具 (msm_list/msm_exec/msm_admin/cc-fs/session/acc_kit/eap/neat/cc-git/loop/resident) + 6 个 hook。D1 Init 向导：CLI 交互式创建 CCC + Phase 2 强制访谈。",
   "type": "module",
