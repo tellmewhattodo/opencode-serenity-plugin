@@ -239,12 +239,12 @@ describe('ccc_admin action=register (v1.17 — 合并自 v1.1 msm_register)', ()
     }
   });
 
-  it('显式 skill 且路径匹配 → 写入该 skill 注册表，skill 字段正确', async () => {
+  it('显式 skill 且路径匹配 → 注册集中写聚合档，skill 仅作元数据', async () => {
     const { cwd } = setupRepo();
     try {
       // 建非 cccName 的 skill 目录 + 脚本
       makeScript(cwd, '.opencode/skills/home-media/scripts/subtool.ts');
-      writeRegistry(cwd, 'home-media', []);
+      writeRegistry(cwd, 'home-serenity', []);
       setState({ activated: true, cwdRoot: cwd, cccName: 'home-serenity' });
 
       const result = await msmAdminTool.execute(
@@ -260,23 +260,23 @@ describe('ccc_admin action=register (v1.17 — 合并自 v1.1 msm_register)', ()
         fakeCtx(cwd),
       );
       expect(result).toContain('registered');
-      // 写入 home-media 注册表（而非 home-serenity）
-      const reg = readRegistry(cwd, 'home-media') as Array<{ name: string; skill: string }>;
+      // 注册集中：写入聚合档（cccName = home-serenity），skill 字段 = home-media
+      const reg = readRegistry(cwd, 'home-serenity') as Array<{ name: string; skill: string }>;
       expect(reg).toHaveLength(1);
       expect(reg[0]?.name).toBe('subtool');
       expect(reg[0]?.skill).toBe('home-media');
-      // home-serenity 注册表文件未创建（跨 skill 写入隔离）
-      expect(existsSync(join(cwd, '.opencode', 'skills', 'home-serenity', 'references', 'mech-registry.json'))).toBe(false);
+      // per-skill 档（home-media/references）不被创建
+      expect(existsSync(join(cwd, '.opencode', 'skills', 'home-media', 'references', 'mech-registry.json'))).toBe(false);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
-  it('显式 skill 但路径不包含该 skill → 抛 skill-path mismatch', async () => {
+  it('显式 skill 但路径不属于该 skill → 抛 skill-path mismatch', async () => {
     const { cwd } = setupRepo();
     try {
       makeScript(cwd, '.opencode/skills/other-skill/scripts/tool.ts');
-      writeRegistry(cwd, 'home-media', []);
+      writeRegistry(cwd, 'home-serenity', []);
       setState({ activated: true, cwdRoot: cwd, cccName: 'home-serenity' });
 
       await expect(

@@ -254,10 +254,11 @@ type RegisterInput = {
   flags: Array<{ name: string; type: string; description?: string; required?: boolean; default?: unknown }>;
   usage: string | undefined;
   /**
-   * 注册归属的 skill（可选）。
+   * 脚本归属的 skill（可选）。
    * - 缺省 → 沿用 state.cccName（向后兼容）
-   * - 显式传入 → 校验 path 必须包含该 skill（.opencode/skills/<skill>/），
-   *   不包含则抛错，防止 skill 字段与脚本实际位置错配（多真相源）。
+   * - 显式传入 → 仅作归属校验：脚本路径必须在 .opencode/skills/<skill>/ 下，
+   *   不满足则抛错（skill 是脚本归属元数据，与注册表写入位置无关）。
+   * 注册永远集中写聚合档（cccName 的 mech-registry.json），skill 只进 entry 字段。
    */
   skill?: string;
 };
@@ -270,8 +271,8 @@ async function registerMsmInner(input: RegisterInput): Promise<string> {
   // 1. 解析归属 skill：显式传入优先，缺省 cccName（向后兼容）
   const skill = input.skill ?? state.cccName;
 
-  // 2. 读 registry（含 schema 信息）— 写目标 skill 的注册表
-  const file = loadRegistryFile(state.cwdRoot, skill);
+  // 2. 读聚合 registry（cccName 的 mech-registry.json —— 注册集中，永远写这份）
+  const file = loadRegistryFile(state.cwdRoot, state.cccName);
 
   // 3. 查重
   if (file.entries.some((e) => e.name === input.name)) {
@@ -289,20 +290,21 @@ async function registerMsmInner(input: RegisterInput): Promise<string> {
     throw new MsmScriptNotFoundError(input.name, absPath);
   }
 
-  // 6. skill-path 一致性校验：显式 skill 时 path 必须包含该 skill 目录
-  //    （防 skill 字段与脚本实际位置错配 — 多真相源；DSH acc_msm 无此校验，本实现强化）
+  // 6. skill-path 归属校验：显式 skill 时脚本路径必须位于该 skill 目录下
+  //    （skill 是脚本归属的元数据校验，与注册表写入位置无关——注册永远集中写聚合档）
   if (input.skill !== undefined) {
     const expectedSegment = `.opencode/skills/${skill}/`;
     const pathNorm = absPath.replaceAll('\\', '/');
     if (!pathNorm.includes(expectedSegment)) {
       throw new Error(
-        `ccc_admin: skill-path mismatch — path "${input.path}" does not contain "${expectedSegment}". ` +
+        `ccc_admin: skill-path mismatch — path "${input.path}" does not belong to skill "${skill}" ` +
+        `(expected under ".opencode/skills/${skill}/"). ` +
         `Provide a script inside .opencode/skills/${skill}/scripts/ or omit the skill argument.`
       );
     }
   }
 
-  // 7. 构造 entry
+  // 7. 构造 entry（skill 仅作元数据字段，不决定写入位置）
   const usage = input.usage ?? `npx tsx ${input.path}`;
   const newEntry: MechEntry = {
     name: input.name,
@@ -320,13 +322,13 @@ async function registerMsmInner(input: RegisterInput): Promise<string> {
     })),
   };
 
-  // 8. 写回（保留 schema）
+  // 8. 写回聚合档（保留 schema）
   file.entries.push(newEntry);
-  writeRegistryFile(state.cwdRoot, skill, file);
+  writeRegistryFile(state.cwdRoot, state.cccName, file);
   log.info('msm', 'ccc_admin register wrote registry', { name: input.name, skill, absPath });
 
-  // 9. 自动 commit（写目标 skill 的注册表文件）
-  const relRegistry = `.opencode/skills/${skill}/references/mech-registry.json`;
+  // 9. 自动 commit（聚合档）
+  const relRegistry = `.opencode/skills/${state.cccName}/references/mech-registry.json`;
   try {
     gitAddAndCommit(state.cwdRoot, relRegistry, `chore(msm): register ${input.name}`);
   } catch (err) {
@@ -470,8 +472,9 @@ export const msmAdminTool: ToolDefinition = tool({
     'Maintains mech-registry.json of the current CCC: register/deregister MSMs, ' +
     'show dev guide, run quality checks, view CCC configuration. ' +
     'action=register: add a new MSM (requires name/path/description/category; optional skill — ' +
-    'when given, path must live under .opencode/skills/<skill>/ and the entry is written to that skill\'s registry; ' +
-    'when omitted, defaults to the CCC name), auto git commit. ' +
+    'when given, path must belong to .opencode/skills/<skill>/ (ownership check only); ' +
+    'the entry is ALWAYS written to the CCC aggregate registry, skill is metadata. ' +
+    'When omitted, skill defaults to the CCC name), auto git commit. ' +
     'action=deregister: remove an MSM, auto git commit. ' +
     'action=guide: MSM development handbook (script conventions, testing, registration). ' +
     'action=check: run DC-M1~M4 quality checks on all MSM scripts. ' +
@@ -489,7 +492,7 @@ export const msmAdminTool: ToolDefinition = tool({
     skill: z
       .string()
       .optional()
-      .describe('[register] owning skill (optional). When provided, path must contain ".opencode/skills/<skill>/" — mismatch throws. Defaults to the CCC name when omitted.'),
+      .describe('[register] owning skill (optional) — ownership check only: path must belong to ".opencode/skills/<skill>/". Registration always goes to the CCC aggregate registry; skill is metadata. Defaults to the CCC name when omitted.'),
     path: z
       .string()
       .optional()
