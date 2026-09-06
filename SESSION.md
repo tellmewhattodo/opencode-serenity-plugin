@@ -147,7 +147,7 @@
 
 ## 当前焦点
 
-**v0.9.0 对齐中（specs v1.4.0，S156，2026-09-06）。Phase 1-4 代码完成 + 562 tests 全绿；未发布。**
+**v0.9.0 已发布（specs v1.4.0，S156，2026-09-06）。npm @shgroup/opencode-serenity-plugin@0.9.0 + git commit 8309f45 + tag v0.9.0。**
 
 | 维度 | 状态 |
 |------|:----:|
@@ -156,8 +156,8 @@
 | Phase 3 机制（trajectory-assistant 改名 / registry 写保护 / dashboard registry 段）| ✅ |
 | Phase 4 logbook rebuild（借道宿主压缩）| ✅ |
 | 测试 562/562 全绿（37 files）| ✅ 2026-09-06 |
+| **v0.9.0 发布（npm + git commit 8309f45 + tag）** | ✅ 2026-09-06 |
 | Phase 5 localstore（全新工具）| ⏳ 未做（宿主无缝评估中）|
-| 版本 bump v0.9.0 + npm 发布 | ⏳ 待用户显式确认 |
 | 仓内 SESSION.md v0.3.4 → v0.8.7 历史补记 | 🟡 独立 follow-up（见未决问题）|
 
 详细方案：S156 `AGENT_SESSIONS/2026-09-06--S156--opencode-serenity 长期维护/osp-v140-impl-plan.md`

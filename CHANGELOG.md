@@ -1,7 +1,7 @@
 # 更新日志
-## v0.9.0 — specs v1.4.0 对齐（S156，2026-09-06，代码完成未发布）
+## v0.9.0 — specs v1.4.0 对齐（S156，2026-09-06）✅ 已发布
 
-> ⚠️ 开发状态：Phase 1-4 代码完成 + 562 tests 全绿；版本 bump + npm 发布待用户显式确认；Phase 5 localstore（全新工具）未做。
+> 发布记录：npm `@shgroup/opencode-serenity-plugin@0.9.0`（npmjs.org official latest，内网 Nexus 镜像未同步 = 已知现象）+ git commit `8309f45` + tag `v0.9.0`（手动纠正落点至 8309f45，见 S156）。562/562 tests 全绿（37 files）。Phase 5 localstore（全新工具）未做。
 
 ### 工具面（11 → 9 契约名，硬切无别名）
 
