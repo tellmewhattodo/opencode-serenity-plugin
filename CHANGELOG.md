@@ -34,10 +34,17 @@ ACC → Metaphor → Principles → CCE → EAP → [状态块 safe-mode 条件]
 - `compacting-skill-inject.test.ts` 重写为 9 块断言（8 红 → 12 绿；Metaphor/EAP/safe-mode 状态块/活跃 Session 块 新增覆盖）
 - `rebuild.test.ts` 新增 10 tests；plugin/session-keeper 测试同步改名
 
-## v0.8.7 — 2026-08-19
+## v0.8.7 — 2026-08-19（ccc_admin 注册表聚合修复 + dev-kit publish 加固）
 
-- 待补充变更说明
+**触发**：`ccc_admin register --skill <name>` 时旧逻辑写 per-skill 注册表 → `msm_exec` 按 cwdRoot aggregate registry 查找失败（skill 参数导致注册表分裂）。
 
+- **`ccc_admin register` 始终写 aggregate registry**：skill 参数降级为 ownership 检查 + metadata（不再决定写入目标）；修复 register 后 msm_exec 找不到新 MSM 的问题。
+- **dev-kit publish hardening**（develop-kit 增强）：`--registry <url>` 显式指定 npm registry（防内网 Nexus E400，S138 教训）；tarball 核对（`npm pack --dry-run` 断言 dist 必需文件）；版本一致性检查（package.json vs CHANGELOG）；自动 tag v<version> + push（发布即 tag）；`--bump` 同步版本。
+- 测试：551/551 全绿（37 files）。
+
+## v0.8.6 — 2026-08-19（ccc_admin register skill 参数）
+
+- **`ccc_admin register` 接受可选 `--skill` 参数**：path-skill 一致性检查（默认 cccName 向后兼容）。
 
 ## v0.8.5 — 🛑 resident 中断清理加固（S110 用户反馈）
 
