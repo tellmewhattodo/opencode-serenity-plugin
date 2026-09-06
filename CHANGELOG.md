@@ -1,4 +1,39 @@
 # 更新日志
+## v0.9.0 — specs v1.4.0 对齐（S156，2026-09-06，代码完成未发布）
+
+> ⚠️ 开发状态：Phase 1-4 代码完成 + 562 tests 全绿；版本 bump + npm 发布待用户显式确认；Phase 5 localstore（全新工具）未做。
+
+### 工具面（11 → 9 契约名，硬切无别名）
+
+| 旧（v0.8.7） | 新（v0.9.0） | 动作 |
+|-------------|-------------|------|
+| msm_list + msm_exec + ccc_admin（执行面）| **`msm`** 单入口 | 合并：`msm(name, args)` 执行 / 未命中模糊候选 / `inspect=true` / 无参目录 |
+| ccc_admin（管理面）| **`container_admin`** | action=msm（register/deregister/check/guide/ccc-config）+ action=config（CCC 配置读）|
+| cc_fs | **`container_fs`** | 注册键改名（15 子命令保留）|
+| cc_git | **`container_git`** | 注册键改名（6 子命令保留）|
+| session | **`logbook`** | 注册键改名 + rebuild 子命令 |
+| acc_kit | **`dashboard`** | 注册键改名 + health registry 完整性段 |
+| eap + neat | **`praxis`** | 合并 + cce（specs §5.4 逐字）|
+| loop | **`handyman`** | 注册键改名（白名单 worker 语义）|
+| resident | resident | 保留（§4.2 非标准超集）|
+
+### 注入面：compacting.ts 重写为 9 块（specs §5.0-5.9 + §5.11）
+
+ACC → Metaphor → Principles → CCE → EAP → [状态块 safe-mode 条件] → SKILL 全文 → Tools → Session。Metaphor/Principles/CCE/EAP 逐字对齐 specs；Root 边界并入 Principles 块（删除旧独立 `=== Serenity Constraints ===` 块）；Session 块含 TRAJECTORY-ASSISTANT 预声明。
+
+### 机制面
+
+- **trajectory-assistant**（session-keeper 改名）：前缀 `[TRAJECTORY-ASSISTANT · CHECKPOINT]` + ACK 码 + 阈值 150→100 + READ_TOOLS 扩展 + 预声明进 Session 块
+- **registry 写保护**：permission-guards 拦 read/edit/write 写 `references/mech-registry.json`（isRegistryPathBlocked）
+- **dashboard health registry 段**：BOM/wrapper/字段/name 唯一/path 根内+存在（checkRegistryHealth 导出）
+- **logbook rebuild**（新 `src/session/rebuild.ts`）：借道宿主压缩 — `client.session.summarize` + compacting hook 注入"读 SESSION.md 从检查点继续"指令 + autocontinue
+
+### 测试
+
+- **562/562 全绿**（37 files，+11 since v0.8.7 基线 551）
+- `compacting-skill-inject.test.ts` 重写为 9 块断言（8 红 → 12 绿；Metaphor/EAP/safe-mode 状态块/活跃 Session 块 新增覆盖）
+- `rebuild.test.ts` 新增 10 tests；plugin/session-keeper 测试同步改名
+
 ## v0.8.7 — 2026-08-19
 
 - 待补充变更说明

@@ -1,10 +1,17 @@
 /**
  * msm.ts
  *
- * 工具集（3 个）：
- * - msm_list          : PRIMARY — 列出所有 MSM
- * - msm_exec          : PRIMARY — 执行 MSM / 协议元命令
- * - ccc_admin        : 注册 / 注销 MSM（合并 register/deregister）
+ * 工具集（4 个导出）：
+ * - msmTool           : PRIMARY — v0.9 单入口（对齐 dsp v1.30 / specs v1.4.0 §4.1）：
+ *                       name 省略 → 分类目录索引；name + inspect=true → 打印 entry 不执行；
+ *                       name + args → 执行（模糊候选提示，不自动执行候选）
+ * - msm_list          : 兼容保留 — 列出所有 MSM（msmTool 无参分支复用其格式化逻辑）
+ * - msm_exec          : 兼容保留 — 执行 MSM / 协议元命令（msmTool 执行分支复用其链路）
+ * - msmAdminTool      : 管理面（注册/注销/guide/check/ccc-config），契约名 container_admin
+ *
+ * v0.9 备注：
+ * - ccc_admin → container_admin 契约名（specs v1.4.0 §4.1）；注册键由 index.ts 决定
+ * - 公共执行链抽成 runMsmExecChain()，msmExecTool 与 msmTool 共用（行为不变）
  *
  * 注意：bash override (RR3) 已于 2026-06-08 移除。
  */
@@ -116,6 +123,35 @@ function findMsm(name: string, registry: MechEntry[]): MechEntry {
   return entry;
 }
 
+/** 模糊匹配：name 是某个注册 MSM 名的子串（双向），按注册表顺序返回候选 */
+function fuzzyMatchMsms(name: string, registry: MechEntry[]): MechEntry[] {
+  const q = name.toLowerCase();
+  return registry.filter(
+    (e) => e.name.toLowerCase().includes(q) || q.includes(e.name.toLowerCase()),
+  );
+}
+
+/** 把 MSM entry 格式化为可读单行（name | skill | category | description [flags: ...]）
+ *  — 与 msm_list 输出格式同源（msmTool inspect 分支复用） */
+function formatMsmLine(e: MechEntry): string {
+  let line = `${e.name} | ${e.skill} | ${e.category} | ${e.description}`;
+  if (e.flags && e.flags.length > 0) {
+    const flagParts = e.flags
+      .map((f: Record<string, unknown>) => {
+        if (f.flag) return String(f.flag);
+        const name = f.name ? String(f.name) : '';
+        const type = f.type ? String(f.type) : 'string';
+        if (type === 'boolean' || type === 'bool') return `--${name}`;
+        return `--${name} <${type}>`;
+      })
+      .filter(Boolean);
+    if (flagParts.length > 0) {
+      line += ` [flags: ${flagParts.join(', ')}]`;
+    }
+  }
+  return line;
+}
+
 /* ===== msm_list tool ===== */
 export const msmListTool: ToolDefinition = tool({
   description:
@@ -143,33 +179,68 @@ export const msmListTool: ToolDefinition = tool({
     if (registry.length === 0) {
       return `${header}\n(no MSM registered)`;
     }
-    return `${header}\n` + registry.map((e) => {
-      let line = `${e.name} | ${e.skill} | ${e.category} | ${e.description}`;
-      if (e.flags && e.flags.length > 0) {
-        const flagParts = e.flags.map((f: Record<string, unknown>) => {
-          if (f.flag) return String(f.flag);
-          const name = f.name ? String(f.name) : '';
-          const type = f.type ? String(f.type) : 'string';
-          if (type === 'boolean' || type === 'bool') return `--${name}`;
-          return `--${name} <${type}>`;
-        }).filter(Boolean);
-        if (flagParts.length > 0) {
-          line += ` [flags: ${flagParts.join(', ')}]`;
-        }
-      }
-      return line;
-    }).join('\n');
+    return `${header}\n` + registry.map((e) => formatMsmLine(e)).join('\n');
   },
 });
 
-/* ===== msm_exec tool (纯执行，无协议元命令) =====
+/* ===== msm_exec tool (纯执行，无协议元命令) + 公共执行链 =====
  *
  * S028 D5 极简版：只讲 msmName + args + 1 示例。
  * - 不再写"ALWAYS call msm_list first"（LLM 已知）
  * - 不再写"30s timeout"（实际 600s，runtime 内统一）
  * - 不再写"bash is disabled (RR3)"（已在 init-check / 工具面板冗余告知）
  * - 不再写"args 是 string array"（zod schema 已在 args 字段定义）
+ *
+ * v0.9：公共执行链抽成 runMsmExecChain()（msmExecTool 与 msmTool 共用，
+ * 行为与 msmExecTool v0.8.7 逐一对齐，保持不变）：
+ * 1. findMsm 精确查找（调用方已校验注册表中存在——此处防御性再查）
+ * 2. normalizeFlags(entry.flags) → validatePathArgsFromTokens(args)（路径逃逸守卫）
+ * 3. callMsmExec（600s 超时 in-process 委托）
+ * 4. exitCode !== 0 → 抛 MsmExecutionError（保留 stdout/stderr + --help TIP）
+ * 5. 成功 → 返回 stdout || '(no output)'
  */
+async function runMsmExecChain(msmName: string, args: string[]): Promise<string> {
+  log.info('msm', 'msm execute chain', { msm_name: msmName, args });
+  const state = getState();
+  const registry = loadMechRegistry();
+  const entry = findMsm(msmName, registry);
+  log.info('msm', 'msm found in registry', { name: entry.name, skill: entry.skill });
+  const normalized = normalizeFlags(entry.flags as Array<{ name?: string; flag?: string; type?: string }>);
+  try {
+    // path-arg 校验直接对 args（string[]）跑
+    validatePathArgsFromTokens(args, normalized, state.cwdRoot);
+  } catch (err) {
+    log.warn('msm', 'msm path-arg validation failed', { msm: entry.name, err: String(err) });
+    throw err;
+  }
+
+  // 调 msm-call.ts（纯执行，无协议 flag）
+  const result = await callMsmExec({
+    msm_name: msmName,
+    businessArgs: args,
+  });
+  log.info('msm', 'msm execute result', {
+    name: msmName,
+    exitCode: result.exitCode,
+    stdoutLen: result.stdout.length,
+    stderrLen: result.stderr.length,
+  });
+  // v1.15.1 §9: 错误路径保留 stdout
+  if (result.exitCode !== 0) {
+    // v0.5.38: 失败时提示 agent 用 --help 发现所需参数
+    const hint = args.includes('--help') || args.includes('-h')
+      ? ''
+      : '\n[TIP] Pass "--help" as the first arg to see this MSM\'s usage and required flags.';
+    throw new MsmExecutionError(
+      msmName,
+      result.exitCode,
+      result.stdout,
+      result.stderr + hint,
+    );
+  }
+  return result.stdout || '(no output)';
+}
+
 export const msmExecTool: ToolDefinition = tool({
   description:
     'Execute a registered MSM tool. ' +
@@ -191,50 +262,168 @@ export const msmExecTool: ToolDefinition = tool({
       args: input.args,
     });
     await ensureReady();
-    const state = getState();
-
-    // 1. find msm in registry
-    const registry = loadMechRegistry();
-    const entry = findMsm(input.name, registry);
-    log.info('msm', 'msm found in registry', { name: entry.name, skill: entry.skill });
-    const normalized = normalizeFlags(entry.flags as Array<{ name?: string; flag?: string; type?: string }>);
-    try {
-      // path-arg 校验直接对 input.args（string[]）跑
-      validatePathArgsFromTokens(input.args, normalized, state.cwdRoot);
-    } catch (err) {
-      log.warn('msm', 'msm_exec path-arg validation failed', { msm: entry.name, err: String(err) });
-      throw err;
-    }
-
-    // 2. 调 msm-exec.ts（纯执行，无协议 flag）
-    const result = await callMsmExec({
-      msm_name: input.name,
-      businessArgs: input.args,
-    });
-    log.info('msm', 'msm_exec result', {
-      name: input.name,
-      exitCode: result.exitCode,
-      stdoutLen: result.stdout.length,
-      stderrLen: result.stderr.length,
-    });
-    // v1.15.1 §9: 错误路径保留 stdout
-    if (result.exitCode !== 0) {
-      // v0.5.38: 失败时提示 agent 用 --help 发现所需参数
-      const hint = input.args.includes('--help') || input.args.includes('-h')
-        ? ''
-        : '\n[TIP] Pass "--help" as the first arg to see this MSM\'s usage and required flags.';
-      throw new MsmExecutionError(
-        input.name,
-        result.exitCode,
-        result.stdout,
-        result.stderr + hint,
-      );
-    }
-    return result.stdout || '(no output)';
+    return runMsmExecChain(input.name, input.args);
   },
 });
 
-/* ===== v1.17 ccc_admin tool（合并 msm_register + msm_deregister）=====
+/* ===== v0.9 msm 单入口 tool（对齐 dsp v1.30 / specs v1.4.0 §4.1）=====
+ *
+ * 三分支（execute 先 await ensureReady()）：
+ * 1. name 未提供（undefined/空）→ 分类目录索引（msm_list 输出 + 按 skill 汇总计数）
+ * 2. name 提供 + inspect=true → 打印 entry（含 usage/flags），不执行；
+ *    未注册 → 返回模糊候选列表（无候选则提示"not registered; call with no name to see the catalog"）
+ * 3. name 提供 + inspect=false → 执行（精确查找 → 完整执行链）；
+ *    未注册 → 抛 MsmNotRegisteredError 并附模糊候选提示（不自动执行候选）
+ *
+ * 与 msmExecTool/msmListTool 的关系：
+ * - 共享 loadMechRegistry / findMsm / fuzzyMatchMsms / formatMsmLine / runMsmExecChain
+ * - msmExecTool/msmListTool 保持导出（主代理决定 index.ts 注册面；硬切期作为迁移对照）
+ */
+export const msmTool: ToolDefinition = tool({
+  description:
+    '[PRIMARY] MSM single entry — execute or discover registered MSM (Mech & Semi-Mech) tools ' +
+    'in the current cognitive container (CCC). ' +
+    '**Omit name for the catalog index** (grouped by skill with counts). ' +
+    'Pass a registered name to execute it; pass `inspect: true` to print the entry ' +
+    '(usage/flags/description) WITHOUT executing. ' +
+    'An unknown name returns fuzzy candidates — inspect one before executing; ' +
+    'execution never auto-runs a candidate. ' +
+    'Pass "--help" as the first arg of `args` to see an MSM\'s own usage. ' +
+    'MSM registration/management lives in container_admin. ' +
+    `(serenity-plugin v${VERSION})`,
+  args: {
+    name: z.string().optional().describe('MSM name to execute or discover. Omit for the catalog index.'),
+    args: z
+      .array(z.string())
+      .optional()
+      .describe('Business arguments passed to the MSM (each element one arg, preserved losslessly). Pass "--help" as first element to see the MSM usage.'),
+    inspect: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('true = print the MSM entry (usage/flags/description) WITHOUT executing'),
+  },
+  execute: async (input) => {
+    log.info('msm', 'msm called', { name: input.name ?? null, inspect: input.inspect, argsLen: input.args?.length ?? 0 });
+    try {
+      await ensureReady();
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log.warn('msm', 'msm: plugin not active', { reason });
+      return `CCC is not active: ${reason}`;
+    }
+    const state = getState();
+    const registry = loadMechRegistry();
+    const header = `(serenity-plugin v${VERSION})  CCC: ${state.cccName}  Root: ${state.cwdRoot}`;
+
+    const rawName = input.name?.trim() ?? '';
+    const args = input.args ?? [];
+
+    // 分支 1：无 name → 分类目录索引（msm_list 输出 + 按 skill 汇总 + 调用指引）
+    if (rawName === '') {
+      log.info('msm', 'msm: catalog index (no name)');
+      const lines: string[] = [header];
+      if (registry.length === 0) {
+        lines.push('(no MSM registered)');
+        return lines.join('\n');
+      }
+      // 顶部：按 skill 分组统计（按计数 desc 排序）
+      const counts = new Map<string, number>();
+      for (const e of registry) {
+        counts.set(e.skill, (counts.get(e.skill) ?? 0) + 1);
+      }
+      const skillRows = [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([skill, n]) => `  ${skill}: ${n} MSM`);
+      lines.push(`${registry.length} MSMs registered (by skill):`);
+      lines.push(...skillRows);
+      lines.push('');
+      // 中部：完整目录（name | skill | category | description [flags: ...]，同 msm_list）
+      lines.push(...registry.map((e) => formatMsmLine(e)));
+      lines.push('');
+      // 末尾：调用指引
+      lines.push('Execute: msm(name, args) — e.g. msm("ssh-connect", ["exec", "ubuntu", "ls -la"])');
+      lines.push('Inspect: msm(name, [], inspect=true) — view usage/flags without executing');
+      lines.push('Partial name returns matching candidates. Management: container_admin.');
+      return lines.join('\n');
+    }
+
+    // 精确查找
+    let entry: MechEntry | null = null;
+    try {
+      entry = findMsm(rawName, registry);
+    } catch {
+      entry = null;
+    }
+
+    // 未注册 → 模糊候选（inspect 与 execute 都先给候选，不自动执行）
+    if (!entry) {
+      const candidates = fuzzyMatchMsms(rawName, registry);
+      if (input.inspect || candidates.length > 0) {
+        const lines: string[] = [
+          `${header}`,
+          `MSM "${rawName}" is not registered.`,
+        ];
+        if (candidates.length === 0) {
+          lines.push('No matching candidates found; call with no name to see the full catalog.');
+        } else {
+          lines.push(`Did you mean one of these ${candidates.length} candidate(s)? (inspect with inspect=true, then execute by exact name):`);
+          lines.push(...candidates.map((c) => `  ${formatMsmLine(c)}`));
+        }
+        if (input.inspect) {
+          // inspect 语义：不抛错，返回候选文本
+          log.warn('msm', 'msm inspect: not registered', { name: rawName });
+          return lines.join('\n');
+        }
+        // execute 语义：抛 MsmNotRegisteredError，附候选提示
+        log.warn('msm', 'msm execute: not registered', { name: rawName, candidates: candidates.map((c) => c.name) });
+        throw new MsmNotRegisteredError(
+          `${rawName}` + (candidates.length > 0
+            ? `; did you mean: ${candidates.map((c) => c.name).join(', ')}?`
+            : ''),
+        );
+      }
+      throw new MsmNotRegisteredError(rawName);
+    }
+
+    // 分支 2：inspect=true → 打印 entry（不执行）
+    if (input.inspect) {
+      log.info('msm', 'msm inspect', { name: entry.name });
+      const lines: string[] = [
+        header,
+        formatMsmLine(entry),
+        `  path: ${entry.path}`,
+        `  usage: ${entry.usage ?? '(none)'}`,
+      ];
+      if (entry.flags && entry.flags.length > 0) {
+        lines.push('  flags:');
+        for (const f of entry.flags as Array<Record<string, unknown>>) {
+          if (f.flag) {
+            lines.push(`    ${String(f.flag)}${f.description ? ` — ${String(f.description)}` : ''}`);
+          } else if (typeof f.name === 'string') {
+            const type = typeof f.type === 'string' ? f.type : 'string';
+            const desc = typeof f.description === 'string' ? f.description : '';
+            lines.push(`    --${f.name} <${type}>${desc ? ` — ${desc}` : ''}${f.required ? ' (required)' : ''}`);
+          }
+        }
+      }
+      if (entry.subcommands && entry.subcommands.length > 0) {
+        lines.push('  subcommands:');
+        for (const s of entry.subcommands) {
+          lines.push(`    ${s.name} — ${s.description ?? ''}`);
+        }
+      }
+      lines.push('  (inspect only — not executed)');
+      return lines.join('\n');
+    }
+
+    // 分支 3：执行
+    log.info('msm', 'msm execute', { name: entry.name, args });
+    return runMsmExecChain(entry.name, args);
+  },
+});
+
+/* ===== v1.17 container_admin tool（合并 msm_register + msm_deregister；v0.9 契约名 container_admin）=====
  *
  * 设计: 单 tool + action enum 替代两个对称 tool
  * - 减少 LLM 决策树宽度（4 tool slot → 1）
@@ -245,6 +434,7 @@ export const msmExecTool: ToolDefinition = tool({
  * 历史：
  * - v1.1 增补：msm_register + msm_deregister 两个独立 tool
  * - v1.17 合并：ccc_admin 单 tool（减少 slot 占用）
+ * - v0.9 改名：ccc_admin → container_admin（specs v1.4.0 §4.1 契约名；注册键由 index.ts 决定）
  */
 type RegisterInput = {
   name: string;
@@ -265,7 +455,7 @@ type RegisterInput = {
 
 /** 内部 register 实现（v1.17 从 msmRegisterTool 抽出） */
 async function registerMsmInner(input: RegisterInput): Promise<string> {
-  log.info('msm', 'ccc_admin register called', { name: input.name, path: input.path, skill: input.skill });
+  log.info('msm', 'container_admin register called', { name: input.name, path: input.path, skill: input.skill });
   const state = getState();
 
   // 1. 解析归属 skill：显式传入优先，缺省 cccName（向后兼容）
@@ -297,7 +487,7 @@ async function registerMsmInner(input: RegisterInput): Promise<string> {
     const pathNorm = absPath.replaceAll('\\', '/');
     if (!pathNorm.includes(expectedSegment)) {
       throw new Error(
-        `ccc_admin: skill-path mismatch — path "${input.path}" does not belong to skill "${skill}" ` +
+        `container_admin: skill-path mismatch — path "${input.path}" does not belong to skill "${skill}" ` +
         `(expected under ".opencode/skills/${skill}/"). ` +
         `Provide a script inside .opencode/skills/${skill}/scripts/ or omit the skill argument.`
       );
@@ -325,7 +515,7 @@ async function registerMsmInner(input: RegisterInput): Promise<string> {
   // 8. 写回聚合档（保留 schema）
   file.entries.push(newEntry);
   writeRegistryFile(state.cwdRoot, state.cccName, file);
-  log.info('msm', 'ccc_admin register wrote registry', { name: input.name, skill, absPath });
+  log.info('msm', 'container_admin register wrote registry', { name: input.name, skill, absPath });
 
   // 9. 自动 commit（聚合档）
   const relRegistry = `.opencode/skills/${state.cccName}/references/mech-registry.json`;
@@ -443,7 +633,7 @@ function checkMsmInner(): string {
 
 /** 内部 deregister 实现（v1.17 从 msmDeregisterTool 抽出） */
 async function deregisterMsmInner(input: DeregisterInput): Promise<string> {
-  log.info('msm', 'ccc_admin deregister called', { name: input.name });
+  log.info('msm', 'container_admin deregister called', { name: input.name });
   const state = getState();
 
   const file = loadRegistryFile(state.cwdRoot, state.cccName);
@@ -454,7 +644,7 @@ async function deregisterMsmInner(input: DeregisterInput): Promise<string> {
 
   const removed = file.entries.splice(idx, 1)[0]!;
   writeRegistryFile(state.cwdRoot, state.cccName, file);
-  log.info('msm', 'ccc_admin deregister wrote registry', { name: input.name, path: removed.path });
+  log.info('msm', 'container_admin deregister wrote registry', { name: input.name, path: removed.path });
 
   const relRegistry = `.opencode/skills/${state.cccName}/references/mech-registry.json`;
   try {
@@ -558,7 +748,7 @@ export const msmAdminTool: ToolDefinition = tool({
           '  • stdout = business output, stderr = errors',
           '  • Path args → flag name or description must contain path/file/dir',
           '',
-          'Register: ccc_admin register --name <name> --path <path>',
+          'Register: container_admin register --name <name> --path <path>',
           '  --description "<desc>" --category mech|semi-mech',
           '',
           'SQC checks: DC-M1 (test file), DC-M2 (main guard), DC-M3 (registered), DC-M4 (path flags)',
@@ -769,7 +959,7 @@ export const msmAdminTool: ToolDefinition = tool({
     if (input.action === 'register') {
       if (!input.name || !input.path || !input.description || !input.category) {
         throw new Error(
-          'ccc_admin: action=register requires name, path, description, category. '
+          'container_admin: action=register requires name, path, description, category. '
         );
       }
       return await registerMsmInner({
@@ -783,10 +973,10 @@ export const msmAdminTool: ToolDefinition = tool({
       });
     }
     if (!input.name) {
-      throw new Error('ccc_admin: action=deregister requires name');
+      throw new Error('container_admin: action=deregister requires name');
     }
     return await deregisterMsmInner({ name: input.name });
   },
 });
 
-/* 最终 4 tool slot：bash (override) + msm_list + msm_exec + ccc_admin */
+/* 最终 tool slot：msm (单入口) + msm_list/msm_exec (兼容保留) + container_admin（注册面由 index.ts 决定） */

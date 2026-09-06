@@ -32,8 +32,22 @@ import {
   sessionSummary,
   qaSession,
 } from './lib.js';
-import { setActiveSession, removeActiveSession, getActiveSession } from './active-state.js';
+import { setActiveSession, removeActiveSession, getActiveSession, getLastActiveSession } from './active-state.js';
 import type { MechEntry } from '../config-schema.js';
+import { triggerRebuild, resolveCurrentModel, type RebuildClient } from './rebuild.js';
+
+// ── rebuild client 注入（v0.9 logbook rebuild）──
+// index.ts 在 plugin 闭包内 setRebuildClientGetter(() => input.client) 注入真实 SDK client；
+// 工具 execute 经 getter 惰性取（避免 import 循环 + 便于测试 mock）。
+let rebuildClientGetter: (() => RebuildClient | null) | null = null;
+
+export function setRebuildClientGetter(getter: (() => RebuildClient | null) | null): void {
+  rebuildClientGetter = getter;
+}
+
+function getRebuildClient(): RebuildClient | null {
+  return rebuildClientGetter ? rebuildClientGetter() : null;
+}
 
 /** 从 flags 中查找 name 匹配的 flag，仅在 new-style 对象上检查 */
 function findFlagByName(
@@ -87,7 +101,7 @@ export const sessionTool: ToolDefinition = tool({
     'Use `hook-develop-guide` to learn how CCCs extend session capabilities via session-tool MSM.',
   args: {
     subcommand: z
-      .enum(['list', 'show', 'create', 'use', 'close', 'health', 'qa', 'archive', 'summary', 'hook-develop-guide'])
+      .enum(['list', 'show', 'create', 'use', 'close', 'health', 'qa', 'archive', 'summary', 'hook-develop-guide', 'rebuild'])
       .describe(
         'Operation to perform:\n' +
         '  list              — List all sessions with status summary (active/in-progress first)\n' +
@@ -99,6 +113,7 @@ export const sessionTool: ToolDefinition = tool({
         '  qa                — Fact-check a session: verify SESSION.md claims against reality\n' +
         '  archive           — Archive completed sessions past their grace period\n' +
         '  summary           — Dashboard: stats + recent activity + warnings\n' +
+        '  rebuild           — Rebuild the current conversation in place (Ship of Theseus): host compaction is triggered; the agent auto-continues from SESSION.md. Requires --summary <content summary ≤20 chars> + optional --note <task focus>. Same-session — no manual switch needed.\n' +
         '  hook-develop-guide — Guide for CCC developers writing session-tool MSM hooks',
       ),
     name: z
@@ -127,6 +142,14 @@ export const sessionTool: ToolDefinition = tool({
       .string()
       .optional()
       .describe('Optional one-sentence goal for the session'),
+    summary: z
+      .string()
+      .optional()
+      .describe('[rebuild] content summary ≤20 chars — next work phase; REQUIRED for rebuild'),
+    note: z
+      .string()
+      .optional()
+      .describe('[rebuild] task focus ≤200 chars for the rebuilt self — what to work on next (short; SESSION.md holds the full history)'),
   },
   execute: async (input, ctx) => {
     const cwd = ctx.directory;
@@ -232,6 +255,42 @@ export const sessionTool: ToolDefinition = tool({
         throw new SessionError('session-tool qa: requires --name (S### or directory name)');
       }
       return qaSession(sessionsDir, input.name) + extHint;
+    }
+
+    if (sub === 'rebuild') {
+      // v0.9 logbook rebuild（specs §5.9 载体重建，借道宿主压缩）
+      if (!input.summary || input.summary.trim().length === 0) {
+        throw new SessionError('logbook rebuild: requires --summary <content summary ≤20 chars> (next work phase; appended to the session title after rebuild)');
+      }
+      // 定位当前活跃会话（内存 Map；无则提示先 use）
+      const active = getActiveSession(ctx.sessionID) ?? getLastActiveSession();
+      if (!active) {
+        throw new SessionError(
+          'logbook rebuild: no active session. Run "logbook use <S###>" first to activate the trajectory to rebuild, then retry.',
+        );
+      }
+      const client = getRebuildClient();
+      if (!client) {
+        throw new SessionError('logbook rebuild: host client unavailable (session.summarize not exposed)');
+      }
+      // 从当前会话 model 解析 provider/model（宿主压缩需指定模型）——经 client 读会话最后 user 的 model
+      const resolved = await resolveCurrentModel(client, ctx.sessionID, cwd);
+      if (!resolved) {
+        throw new SessionError(
+          'logbook rebuild: could not resolve the current model from the session. ' +
+          'The host compaction trigger requires a providerID/modelID.',
+        );
+      }
+      const result = await triggerRebuild(client, {
+        sessionID: ctx.sessionID,
+        providerID: resolved.providerID,
+        modelID: resolved.modelID,
+        summary: input.summary.trim(),
+        note: input.note?.trim() || undefined,
+        directory: cwd,
+      });
+      if (!result.ok) throw new SessionError(result.message);
+      return result.message + extHint;
     }
 
     throw new SessionError(`session-tool: unknown subcommand "${sub}"`);

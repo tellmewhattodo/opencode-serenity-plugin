@@ -30,6 +30,22 @@ import { isSafeModeOn, readBlacklist, matchBlacklistEntry } from '../safe-mode.j
 import { captureOcSessionId } from '../session/active-state.js';
 import { addToolWeight } from '../session/session-keeper.js';
 
+/**
+ * v0.9 registry 写保护判定（specs §4.3）：目标路径命中 mech-registry.json 或其 references/ 父目录
+ * （写 deny 读 allow）。返回命中路径（需阻断），未命中返回 null。
+ * 注册表管理走 container_admin msm register/deregister（内部豁免——不走文件工具）。
+ */
+export function isRegistryPathBlocked(paths: string[]): string | null {
+  for (const p of paths) {
+    const norm = p.replaceAll('\\', '/');
+    // 命中聚合档路径：.opencode/skills/<ccc-name>/references/mech-registry.json
+    if (norm.includes('/references/mech-registry.json')) return p;
+    // 命中 references/ 目录节点本身（写目录 = 改注册表区域）
+    if (norm.endsWith('/references') || norm.endsWith('/references/')) return p;
+  }
+  return null;
+}
+
 type ToolArgs = Record<string, unknown>;
 
 /**
@@ -124,6 +140,19 @@ const toolExecuteBeforeImpl: NonNullable<Hooks['tool.execute.before']> = async (
           `[serenity] ${input.tool} path "${p}" is ${verdict} the serenity workspace root "${state.cwdRoot}" (RR5).`,
         );
       }
+    }
+  }
+
+  // v0.9 registry 写保护（specs §4.3）：mech-registry.json 及 references/ 节点写 deny、读 allow。
+  // 注册表是结构核心不是秘密——agent 不得经文件工具直接改，管理走 container_admin msm register/deregister。
+  if (input.tool === 'write' || input.tool === 'edit') {
+    const registryGuard = isRegistryPathBlocked(paths);
+    if (registryGuard) {
+      log.warn('guard', `${input.tool} blocked: mech-registry.json is ACC-managed`, { path: registryGuard });
+      throw new Error(
+        `[serenity] ${input.tool} to "${registryGuard}" is not allowed — mech-registry.json is ACC-managed. ` +
+        `Use the container_admin tool (msm register/deregister) to modify the MSM registry.`,
+      );
     }
   }
 

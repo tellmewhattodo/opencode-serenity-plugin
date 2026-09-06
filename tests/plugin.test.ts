@@ -66,10 +66,12 @@ describe('plugin entry', () => {
     )) as Record<string, any>;
     expect(hooks.tool).toBeDefined();
     if (hooks.tool) {
-      // bash 已不再注册 (RR3 于 2026-06-08 移除)
-      expect(hooks.tool['msm_list']).toBeDefined();
-      expect(hooks.tool['msm_exec']).toBeDefined();
-      expect(hooks.tool['ccc_admin']).toBeDefined();
+      // v0.9: specs v1.4.0 契约名（ccc_admin → container_admin 等）
+      expect(hooks.tool['container_fs']).toBeDefined();
+      expect(hooks.tool['container_git']).toBeDefined();
+      expect(hooks.tool['logbook']).toBeDefined();
+      expect(hooks.tool['dashboard']).toBeDefined();
+      expect(hooks.tool['container_admin']).toBeDefined();
     }
     expect(hooks['tool.execute.before']).toBeDefined();
     expect(hooks['experimental.chat.system.transform']).toBeDefined();

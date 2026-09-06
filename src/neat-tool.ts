@@ -200,6 +200,8 @@ Neat works for research articles, theoretical frameworks, and content architectu
 - \`references/eap-theory-framework.md\` — Complete EAP (Explicit Abstraction Principle) theory framework, including abstract, core variables, definitions, and user's conceptual corrections. Use this when continuing content work on language as LLM's essential raw material.
 `;
 
+export { CONTENT };
+
 export const neatTool: ToolDefinition = tool({
   description:
     `Neat — collaborative plan/requirements and design partner methodology. ` +

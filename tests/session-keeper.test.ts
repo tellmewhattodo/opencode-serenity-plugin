@@ -71,9 +71,9 @@ function makeMsg(role: string, text: string, parts?: any[]): any {
 describe('readKeeperThreshold()', () => {
   afterEach(() => resetEnv());
 
-  it('no config file -> default 150', () => {
+  it('no config file -> default 100', () => {
     cwd = setupEnv(undefined);
-    expect(readKeeperThreshold(cwd)).toBe(150);
+    expect(readKeeperThreshold(cwd)).toBe(100);
   });
 
   it('config with custom threshold', () => {
@@ -83,12 +83,12 @@ describe('readKeeperThreshold()', () => {
 
   it('config without sessionKeeper section -> default', () => {
     cwd = setupEnv({ loop: { defaultModel: 'x' } });
-    expect(readKeeperThreshold(cwd)).toBe(150);
+    expect(readKeeperThreshold(cwd)).toBe(100);
   });
 
   it('invalid threshold type -> default', () => {
     cwd = setupEnv({ sessionKeeper: { threshold: 'abc' } });
-    expect(readKeeperThreshold(cwd)).toBe(150);
+    expect(readKeeperThreshold(cwd)).toBe(100);
   });
 
   it('threshold zero is valid', () => {
@@ -171,7 +171,7 @@ describe('processSessionKeeper() — ACK cycle (multi-round)', () => {
       makeMsg('user', 'batch write', [
         makeToolUsePart('write', { filePath: '/tmp/x.md' }),
       ]),
-      makeAssistantMsg(`updated SESSION.md\n[SESSION-KEEPER-recorded-${code}]`),
+      makeAssistantMsg(`updated SESSION.md\n[TRAJECTORY-ASSISTANT-recorded-${code}]`),
     ];
     const r2 = processSessionKeeper(OC_SESSION_ID, messagesR2, cwd, SESSION_DIR);
     expect(r2.reminder).toBeNull(); // ACK cleared pending
@@ -197,7 +197,7 @@ describe('processSessionKeeper() — ACK cycle (multi-round)', () => {
     // ACK with wrong code
     const messagesR2 = [
       makeMsg('user', 'hello'),
-      makeAssistantMsg('[SESSION-KEEPER-recorded-XXX]'),
+      makeAssistantMsg('[TRAJECTORY-ASSISTANT-recorded-XXX]'),
     ];
     const r2 = processSessionKeeper(OC_SESSION_ID, messagesR2, cwd, SESSION_DIR);
     expect(r2.reminder).not.toBeNull(); // still pending
@@ -208,7 +208,7 @@ describe('processSessionKeeper() — ACK cycle (multi-round)', () => {
 
     const messagesR2 = [
       makeMsg('user', 'hello'),
-      makeAssistantMsg(`[SESSION-KEEPER-skipped-${code}]`),
+      makeAssistantMsg(`[TRAJECTORY-ASSISTANT-skipped-${code}]`),
     ];
     const r2 = processSessionKeeper(OC_SESSION_ID, messagesR2, cwd, SESSION_DIR);
     expect(r2.reminder).toBeNull();
@@ -218,7 +218,7 @@ describe('processSessionKeeper() — ACK cycle (multi-round)', () => {
   it('score resets after ACK, re-accumulates for next cycle', () => {
     const { code } = triggerReminder();
     // ACK
-    const msgs1 = [makeMsg('user', 'x'), makeAssistantMsg(`[SESSION-KEEPER-recorded-${code}]`)];
+    const msgs1 = [makeMsg('user', 'x'), makeAssistantMsg(`[TRAJECTORY-ASSISTANT-recorded-${code}]`)];
     const r1 = processSessionKeeper(OC_SESSION_ID, msgs1, cwd, SESSION_DIR);
     expect(r1.reminder).toBeNull();
 
@@ -261,23 +261,23 @@ describe('processSessionKeeper() — tool weight calculation', () => {
     expect(r.reminder).not.toBeNull();
   });
 
-  it('cc_fs read subcommand -> weight 1', () => {
-    addToolWeight(OC_SESSION_ID, 'cc_fs', { subcommand: 'list' });
+  it('container_fs read subcommand -> weight 1', () => {
+    addToolWeight(OC_SESSION_ID, 'container_fs', { subcommand: 'list' });
     const r = processSessionKeeper(OC_SESSION_ID, [makeMsg('user', 'hi'), makeAssistantMsg('ok')], cwd, SESSION_DIR);
     expect(r.reminder).toBeNull();
   });
 
-  it('cc_fs write subcommand -> weight 3', () => {
-    addToolWeight(OC_SESSION_ID, 'cc_fs', { subcommand: 'mkdir' });
-    addToolWeight(OC_SESSION_ID, 'cc_fs', { subcommand: 'rm' });
+  it('container_fs write subcommand -> weight 3', () => {
+    addToolWeight(OC_SESSION_ID, 'container_fs', { subcommand: 'mkdir' });
+    addToolWeight(OC_SESSION_ID, 'container_fs', { subcommand: 'rm' });
     const r = processSessionKeeper(OC_SESSION_ID, [makeMsg('user', 'hi'), makeAssistantMsg('ok')], cwd, SESSION_DIR);
     // 3+3=6 >= 5
     expect(r.reminder).not.toBeNull();
   });
 
   it('non-tracked tools -> weight 0', () => {
-    addToolWeight(OC_SESSION_ID, 'session', { subcommand: 'use' });
-    // session tool is READ_TOOLS weight=1, so with threshold=5 not enough
+    addToolWeight(OC_SESSION_ID, 'logbook', { subcommand: 'list' });
+    // logbook list is not in WRITE sets nor READ_TOOLS by that name — weight 0, threshold=5 not reached
     const r = processSessionKeeper(OC_SESSION_ID, [makeMsg('user', 'hi'), makeAssistantMsg('ok')], cwd, SESSION_DIR);
     expect(r.reminder).toBeNull();
   });
@@ -341,22 +341,22 @@ describe('processSessionKeeper() — SDK tool format compatibility', () => {
     expect(r.reminder).not.toBeNull();
   });
 
-  it('SDK format: cc_fs subcommands work', () => {
-    addToolWeight('sdk-test-4', 'cc_fs', { subcommand: 'mkdir', path: '/tmp/d' });
-    addToolWeight('sdk-test-4', 'cc_fs', { subcommand: 'append', path: '/tmp/f', content: 'x' });
+  it('SDK format: container_fs subcommands work', () => {
+    addToolWeight('sdk-test-4', 'container_fs', { subcommand: 'mkdir', path: '/tmp/d' });
+    addToolWeight('sdk-test-4', 'container_fs', { subcommand: 'append', path: '/tmp/f', content: 'x' });
     const messages = [makeMsg('user', 'fs work'), makeAssistantMsg('done')];
     const r = processSessionKeeper('sdk-test-4', messages, cwd, SESSION_DIR);
     // 2 write subcommands * 3 = 6 >= threshold 5
     expect(r.reminder).not.toBeNull();
   });
 
-  it('SDK format: session use detected as reset', () => {
+  it('SDK format: logbook use detected as reset', () => {
     resetKeeperStore();
-    addToolWeight('sdk-test-5', 'session', { subcommand: 'use', name: 'S001' });
+    addToolWeight('sdk-test-5', 'logbook', { subcommand: 'use', name: 'S001' });
     addToolWeight('sdk-test-5', 'write', { filePath: '/tmp/x.md' });
     const messages = [makeMsg('user', 'some work'), makeAssistantMsg('done')];
     const r = processSessionKeeper('sdk-test-5', messages, cwd, SESSION_DIR);
-    // 1 write + 3 = 3, below threshold 5
+    // logbook use (read weight 1) + 1 write (3) = 4, below threshold 5
     expect(r.reminder).toBeNull();
   });
 
@@ -424,7 +424,7 @@ describe('processSessionKeeper() — rebuild from history on session restore', (
       { info: { role: 'user' }, parts: [{ type: 'text', text: 'use' }] },
       { info: { role: 'assistant' }, parts: [{ type: 'tool', state: { status: 'completed', output: '[SESSION CONTEXT] Activated: S001' } }] },
       makeToolUseMsg('user', 'work', [{ name: 'write', input: { filePath: '/tmp/a.md' } }]),
-      { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'updated\n[SESSION-KEEPER-recorded-ABC]' }] },
+      { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'updated\n[TRAJECTORY-ASSISTANT-recorded-ABC]' }] },
     ];
     const r = processSessionKeeper('rebuild-test-3', history, cwd, SESSION_DIR);
     // ACK found -> score = 0, no reminder

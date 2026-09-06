@@ -452,6 +452,8 @@ ${BQ}
 > 完整理论、论文、案例参考: https://github.com/tellmewhattodo/theory-eap
 `;
 
+export { CONTENT };
+
 export const eapTool: ToolDefinition = tool({
   description:
     `EAP — Explicit Abstraction Principle theory, framework, practice guide, and examples. ` +

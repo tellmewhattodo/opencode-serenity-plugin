@@ -1,8 +1,10 @@
 /**
  * opencode-serenity-plugin — server entry
  *
- * 职责：注册 9 个自定义工具 + 6 个 system hook，实现 serenity 认知基础设施的
- *       plugin 层（MSM 框架、文件系统操作、会话管理、路径守卫、skill 注入等）。
+ * 职责：注册 9 个内置工具（v0.9 specs v1.4.0 契约名：container_fs/container_git/logbook/
+ *       dashboard/msm/container_admin/praxis/handyman/resident）+ 6 个 system hook，
+ *       实现 serenity 认知基础设施的 plugin 层（MSM 框架、文件系统操作、会话管理、
+ *       路径守卫、skill 注入等）。
  *
  * 设计文档见 docs/：
  *   - architecture-v0.md — 两阶段 init + 模块分解
@@ -21,16 +23,13 @@
 import type { Plugin, Hooks } from '@opencode-ai/plugin';
 import { tryActivateSync } from './activation.js';
 import {
-  msmListTool,
-  msmExecTool,
+  msmTool,
   msmAdminTool,
-
 } from './msm.js';
 import { fileSystemTool } from './fs/file-system-tool.js';
-import { sessionTool } from './session/session-tool.js';
+import { sessionTool, setRebuildClientGetter } from './session/session-tool.js';
 import { accKitTool } from './acc-kit.js';
-import { eapTool } from './eap-tool.js';
-import { neatTool } from './neat-tool.js';
+import { praxisTool } from './praxis-tool.js';
 import { ccGitTool } from './git/cc-git-tool.js';
 import { loopTool, cleanupAllLoops } from './tools/loop-tool.js';
 import { residentTool } from './tools/resident-tool.js';
@@ -51,23 +50,25 @@ const plugin: Plugin = async (input) => {
     return {};
   }
 
+  // v0.9: logbook rebuild 需 host client（session.summarize 触发压缩）——注入惰性 getter
+  setRebuildClientGetter(() => input.client as never);
+
   // Phase 2 启动：fire-and-forget，状态机后台验证 RR1 + RR2
   // （由 activation.activateAsync 内部触发，此处不 await）
 
   // 注册 hooks + tools（Phase 2 未完成时 hook 内 await ensureReady() 阻塞）
+  // v0.9 工具面 = specs v1.4.0 契约名（11 → 10 注册键 + msm 单入口）
   const hooks: Hooks = {
     tool: {
-      msm_list: msmListTool,
-      msm_exec: msmExecTool,
-      ccc_admin: msmAdminTool,
-      cc_fs: fileSystemTool, // v0.1 D4: 跨实例文件系统工具 (D20: renamed to cc-fs)
-      session: sessionTool, // v0.1 D5: 通用会话管理工具
-      acc_kit: accKitTool,  // v0.8: ACC 通用能力工具包 (cc_ck 升级：health/time/wait)
-      eap: eapTool,        // v0.3: EAP 认知质量框架 (渐进式披露)
-      neat: neatTool,      // v0.3: Neat 设计协作协议 (渐进式披露)
-      cc_git: ccGitTool,   // v0.4: CCC git 管理工具 (status/commit/push/log/pull)
-      loop: loopTool,      // v0.5: Loop tool — 外部驱动可靠循环
-      resident: residentTool, // v0.8 M0: Resident — 顶层常驻 agent (start/status/stop)
+      container_fs: fileSystemTool, // cc_fs → container_fs
+      container_git: ccGitTool,   // cc_git → container_git
+      logbook: sessionTool,       // session → logbook（含 rebuild 子命令）
+      dashboard: accKitTool,      // acc_kit → dashboard
+      handyman: loopTool,         // loop → handyman
+      msm: msmTool,               // msm_list + msm_exec → msm 单入口
+      container_admin: msmAdminTool, // ccc_admin → container_admin
+      praxis: praxisTool,         // eap + neat → praxis（含 cce）
+      resident: residentTool,     // 非标准超集（保留）
     },
     dispose: async () => { cleanupAllLoops(); },
     ...createPermissionGuards(),

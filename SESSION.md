@@ -147,14 +147,20 @@
 
 ## 当前焦点
 
-**v0.3.4 已发布（2026-06-20）。ACC/CCC 模型成型，384 tests pass。**
+**v0.9.0 对齐中（specs v1.4.0，S156，2026-09-06）。Phase 1-4 代码完成 + 562 tests 全绿；未发布。**
 
 | 维度 | 状态 |
 |------|:----:|
-| v0.3.4 release（npm + git tag 对齐）| ✅ 2026-06-20 |
-| 384/384 tests pass（28 文件）| ✅ |
-| README 重写（ACC/CCC narrative）| ✅ 已提交 (fee0ee1) |
-| **已知 issue**: `msm_name`→`name` 参数改名（v0.3.2）导致旧 session tool call schema 失效 | 🟡 重启 session 解决 |
+| Phase 1 工具面（9 契约名：container_fs/container_git/logbook/dashboard/handyman/msm/praxis/container_admin/resident）| ✅ |
+| Phase 2 注入 9 块（compacting.ts 重写，specs §5.0-5.9）| ✅ |
+| Phase 3 机制（trajectory-assistant 改名 / registry 写保护 / dashboard registry 段）| ✅ |
+| Phase 4 logbook rebuild（借道宿主压缩）| ✅ |
+| 测试 562/562 全绿（37 files）| ✅ 2026-09-06 |
+| Phase 5 localstore（全新工具）| ⏳ 未做（宿主无缝评估中）|
+| 版本 bump v0.9.0 + npm 发布 | ⏳ 待用户显式确认 |
+| 仓内 SESSION.md v0.3.4 → v0.8.7 历史补记 | 🟡 独立 follow-up（见未决问题）|
+
+详细方案：S156 `AGENT_SESSIONS/2026-09-06--S156--opencode-serenity 长期维护/osp-v140-impl-plan.md`
 
 ---
 
@@ -406,6 +412,7 @@
 
 ## 最近变更
 
+- 2026-09-06 — **v0.9.0 对齐推进（S156，specs v1.4.0）**：Phase 1 工具面（9 契约名硬切）、Phase 2 注入 9 块（compacting.ts 重写：ACC→Metaphor→Principles→CCE→EAP→[状态]→SKILL→Tools→Session，Root 边界并入 Principles，删除旧 `=== Serenity Constraints ===` 块）、Phase 3 机制（trajectory-assistant 改名/registry 写保护/dashboard health registry 段）、Phase 4 logbook rebuild（借道宿主压缩，`src/session/rebuild.ts` 新建）；562/562 tests 全绿（37 files，compacting-skill-inject 重写为 9 块断言 8红→12绿 + rebuild.test.ts 新增 10）。**未发布**（bump+发布待用户确认；详见上方 当前焦点 + CHANGELOG v0.9.0 段）
 - 2026-06-07 — **v0.0.2 release**：RR7 init + bin install CLI + msm_exec 协议层 + hook 保护 + zod-first；320/320 tests pass；远程从 GitLab 迁 GitHub（commit `d0ff4e2`；详见上方 v0.0.2 — 2026-06-07 (release) 块）
 - 2026-06-06 — **v1.10.1** 修复 `/serenity-init` 在非 serenity 目录不可见：TUI plugin 自安装到 `~/.config/opencode/tui.json`，让 plugin 在**任何**目录被 opencode 加载；184/184 tests pass（commit `d0ab00a`；详见 `AGENT_SESSIONS/2026-06-06--S020--fix-serenity-init-visibility`）
 - 2026-06-06 — **v1.10** RR7 init — `/serenity-init` slash command + DialogPrompt UX（commit `d026b05`，156 tests pass）

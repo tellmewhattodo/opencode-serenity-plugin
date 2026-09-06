@@ -1,10 +1,13 @@
 /**
- * session-keeper.ts — Session persistence reminder mechanism
+ * session-keeper.ts — trajectory-assistant (v0.9): SESSION.md 记录督促机制
  *
  * Tracks READ/WRITE tool activity with weighted scoring.
  * When score reaches threshold, injects a reminder into the user message
  * requiring the model to ACK with a random 3-char code.
  * Reminder persists every round until ACK received.
+ *
+ * v0.9 改名对齐（specs v1.4.0 §5.11 + dsp v1.30）：[Session-Keeper] → [TRAJECTORY-ASSISTANT · CHECKPOINT]
+ * 阈值默认 150 → 100（spec 默认）；预声明文本进 Session 块（compacting.ts 注入）。
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -25,13 +28,13 @@ type SessionId = string;
 
 // ── Constants ──
 
-const DEFAULT_THRESHOLD = 150;
+const DEFAULT_THRESHOLD = 100; // v0.9: 150 → 100 (specs v1.4.0 默认)
 const WRITE_WEIGHT = 3;
 const READ_WEIGHT = 1;
 const DELEGATE_WEIGHT = 10;
 
 const READ_TOOLS = new Set([
-  "read", "grep", "glob", "msm_list", "ccc_admin", "msm_exec",
+  "read", "grep", "glob", "msm", "msm_list", "container_admin", "ccc_admin", "msm_exec", "logbook",
 ]);
 
 const WRITE_TOOLS = new Set([
@@ -42,30 +45,30 @@ const DELEGATE_TOOLS = new Set([
   "task",
 ]);
 
-// cc_fs subcommands: write operations
+// container_fs subcommands: write operations
 const WRITE_FS_SUBCOMMANDS = new Set([
   "mkdir", "rm", "mv", "cp", "touch", "append",
 ]);
 
-// cc_git subcommands: write operations
+// container_git subcommands: write operations
 const WRITE_GIT_SUBCOMMANDS = new Set(["commit", "push"]);
 
-const ACK_PATTERN = /\[SESSION-KEEPER-(recorded|skipped)-([A-Za-z0-9]{3})\]/;
+const ACK_PATTERN = /\[TRAJECTORY-ASSISTANT-(recorded|skipped)-([A-Za-z0-9]{3})\]/;
 
 const CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 const REMINDER_TEXT =
   "\n\n" +
   "\u2501".repeat(80) + "\n" +
-  "[Session-Keeper] Active session (S###).\n" +
+  "[TRAJECTORY-ASSISTANT · CHECKPOINT] Score threshold reached. Active session: S###.\n" +
   "\n" +
   "DO NOT ignore this message. Append the ACK code below to your response.\n" +
   "DO NOT stop ongoing work — continue your task while acknowledging.\n" +
   "\n" +
   "If session progress should be recorded:\n" +
-  "  [SESSION-KEEPER-recorded-{code}]\n" +
+  "  [TRAJECTORY-ASSISTANT-recorded-{code}]\n" +
   "If nothing to record this round:\n" +
-  "  [SESSION-KEEPER-skipped-{code}]\n" +
+  "  [TRAJECTORY-ASSISTANT-skipped-{code}]\n" +
   "\n" +
   "Use the exact code above. Codes are single-use; do not reuse from prior rounds.\n" +
   "\u2501".repeat(80);
@@ -222,10 +225,10 @@ export function addToolWeight(sessionId: string, toolName: string, args: Record<
     weight = DELEGATE_WEIGHT;
   } else if (WRITE_TOOLS.has(toolName)) {
     weight = WRITE_WEIGHT;
-  } else if (toolName === "cc_fs") {
+  } else if (toolName === "container_fs") {
     const sub = String(args.subcommand ?? "");
     weight = WRITE_FS_SUBCOMMANDS.has(sub) ? WRITE_WEIGHT : READ_WEIGHT;
-  } else if (toolName === "cc_git") {
+  } else if (toolName === "container_git") {
     const sub = String(args.subcommand ?? "");
     weight = WRITE_GIT_SUBCOMMANDS.has(sub) ? WRITE_WEIGHT : READ_WEIGHT;
   } else if (READ_TOOLS.has(toolName)) {
